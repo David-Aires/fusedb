@@ -1,0 +1,264 @@
+name: Release
+
+# Trigger: push a version tag like v0.2.0
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+  # Manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (build wheels but do not publish)"
+        required: false
+        default: "false"
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+  MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+
+jobs:
+  # ── 1. Validate tag matches pyproject.toml version ──────────────────────────
+  validate:
+    name: Validate version
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Check tag == pyproject version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(uv run python -c "
+          import tomllib
+          with open('pyproject.toml','rb') as f:
+              print(tomllib.load(f)['project']['version'])
+          ")
+          echo "Tag: $TAG  |  Package: $PKG"
+          [ "$TAG" = "$PKG" ] || (echo "❌ Version mismatch!" && exit 1)
+
+  # ── 2. Build Linux wheels (manylinux) ───────────────────────────────────────
+  linux:
+    name: Linux / ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    needs: [validate]
+    if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    strategy:
+      matrix:
+        target:
+          - x86_64
+          - x86      # 32-bit
+          - aarch64
+          - armv7
+          - s390x
+          - ppc64le
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: >
+            --release
+            --out dist/
+            --find-interpreter
+          # Use manylinux_2_28 for maximum compatibility
+          manylinux: auto
+          # Cross-compile via QEMU for non-x86 targets
+          before-script-linux: |
+            # Install musl for static builds on aarch64
+            if command -v yum &>/dev/null; then
+              yum install -y openssl-devel
+            fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: dist/*.whl
+
+  # ── 3. Build musl (Alpine) wheels ───────────────────────────────────────────
+  musllinux:
+    name: musl Linux / ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    needs: [validate]
+    if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build wheels (musl)
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist/ --find-interpreter
+          manylinux: musllinux_1_2
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-musllinux-${{ matrix.target }}
+          path: dist/*.whl
+
+  # ── 4. Build macOS wheels ────────────────────────────────────────────────────
+  macos:
+    name: macOS / ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    needs: [validate]
+    if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    strategy:
+      matrix:
+        include:
+          - target: x86_64      # Intel Mac
+            runner: macos-13
+          - target: aarch64     # Apple Silicon
+            runner: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: >
+            --release
+            --out dist/
+            --find-interpreter
+            --target ${{ matrix.target }}-apple-darwin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-${{ matrix.target }}
+          path: dist/*.whl
+
+  # ── 5. Build Windows wheels ──────────────────────────────────────────────────
+  windows:
+    name: Windows / ${{ matrix.target }}
+    runs-on: windows-latest
+    needs: [validate]
+    if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    strategy:
+      matrix:
+        target: [x64, x86]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist/ --find-interpreter
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-${{ matrix.target }}
+          path: dist/*.whl
+
+  # ── 6. Build sdist ───────────────────────────────────────────────────────────
+  sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    needs: [validate]
+    if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  # ── 7. Publish to PyPI ───────────────────────────────────────────────────────
+  publish:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [linux, musllinux, macos, windows, sdist]
+    # Only publish on real tag pushes (not manual dry-run)
+    if: >
+      startsWith(github.ref, 'refs/tags/v') &&
+      (github.event_name == 'push' || github.event.inputs.dry_run == 'false')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/fusedb
+    permissions:
+      id-token: write   # OIDC trusted publishing (no token needed if configured)
+
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: List dist/
+        run: ls -lh dist/
+
+      - name: Publish to PyPI (OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Use OIDC trusted publishing — no PYPI_API_TOKEN secret needed.
+          # Configure it at: https://pypi.org/manage/project/fusedb/settings/publishing/
+          # Alternatively, use an API token:
+          # password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
+          verbose: true
+
+  # ── 8. Create GitHub Release ─────────────────────────────────────────────────
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [publish]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Extract the section for this version from CHANGELOG.md
+          NOTES=$(awk "/^## \[$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES"     >> $GITHUB_OUTPUT
+          echo "EOF"        >> $GITHUB_OUTPUT
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "fusedb ${{ github.ref_name }}"
+          body: ${{ steps.changelog.outputs.notes }}
+          files: dist/*
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}

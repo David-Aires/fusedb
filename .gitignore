@@ -1,0 +1,47 @@
+# Rust
+/target/
+Cargo.lock        # library crates: do NOT commit lock file
+**/*.rs.bk
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.so
+*.dylib
+*.dll
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+
+# uv
+.venv/
+.python-version
+
+# maturin
+*.pdb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+
+# Benchmark results (HTML reports from criterion)
+criterion/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+*.tmp
+*.bak

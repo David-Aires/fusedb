@@ -1,0 +1,42 @@
+[package]
+name        = "fusedb"
+version     = "0.2.0"
+edition     = "2021"
+description = "A read-optimised binary database where many keys share one object — with zero duplication on disk."
+authors     = ["David Aires <d.aires@easi.net>"]
+license     = "MIT"
+repository  = "https://github.com/David-Aires/fusedb"
+homepage    = "https://github.com/David-Aires/fusedb"
+keywords    = ["database", "key-value", "lookup", "enrichment"]
+categories  = ["database", "data-structures"]
+readme      = "README.md"
+exclude     = ["tests/*", "benches/*", ".github/*"]
+rust-version = "1.83"   # pyo3 0.28 minimum
+
+[lib]
+name       = "fusedb"
+crate-type = ["cdylib", "rlib"]
+
+[[bench]]
+name    = "lookup"
+harness = false
+
+[dependencies]
+pyo3       = { version = "=0.28.2", features = ["extension-module"] }
+memmap2    = "0.9"
+crc32fast  = "1.4"
+ahash      = "0.8"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile  = "3"
+
+[profile.release]
+opt-level     = 3
+lto           = true
+codegen-units = 1
+strip         = true
+
+[profile.bench]
+opt-level = 3
+lto       = true

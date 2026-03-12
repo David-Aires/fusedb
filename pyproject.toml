@@ -1,0 +1,109 @@
+[build-system]
+requires      = ["maturin>=1.4,<2"]
+build-backend = "maturin"
+
+# ── Project metadata ──────────────────────────────────────────────────────────
+
+[project]
+name        = "fusedb"
+version     = "0.2.0"
+description = "A read-optimised binary database where many keys share one object — with zero duplication on disk."
+readme      = "README.md"
+license     = { text = "MIT" }
+requires-python = ">=3.10"
+authors     = [{ name = "David Aires", email = "d.aires@easi.net" }]
+keywords    = ["database", "key-value", "lookup", "enrichment"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+# Only runtime dep: msgpack
+dependencies = ["msgpack>=1.0"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-benchmark>=4",
+    "pytest-cov>=5",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "ipaddress",
+]
+
+[project.urls]
+Homepage  = "https://github.com/David-Aires/fusedb"
+Repository = "https://github.com/David-Aires/fusedb"
+Issues    = "https://github.com/David-Aires/fusedb/issues"
+Changelog = "https://github.com/David-Aires/fusedb/blob/main/CHANGELOG.md"
+
+# ── Maturin (Rust build) ──────────────────────────────────────────────────────
+
+[tool.maturin]
+python-source  = "python"
+module-name    = "fusedb._fusedb"
+compatibility  = "manylinux2014"
+# strip is handled by [profile.release] strip = true in Cargo.toml
+# do NOT set strip here — it breaks `maturin develop` (debug builds)
+profile        = "release"
+features       = ["pyo3/extension-module"]
+
+# ── dependency-groups (PEP 735 / uv native) ───────────────────────────────────
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-benchmark>=4",
+    "pytest-cov>=5",
+    "ruff>=0.9",
+    "mypy>=1.10",
+    "maturin>=1.4,<2",
+    "msgpack>=1.0",
+]
+
+# ── Ruff ──────────────────────────────────────────────────────────────────────
+
+[tool.ruff]
+target-version = "py310"
+line-length    = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "ANN"]
+
+# ── Mypy ──────────────────────────────────────────────────────────────────────
+
+[tool.mypy]
+python_version         = "3.10"
+strict                 = true
+ignore_missing_imports = true   # _fusedb stub not generated yet
+
+# ── Pytest ────────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+testpaths    = ["tests"]
+addopts      = "-v --tb=short"
+filterwarnings = ["error"]
+
+# ── Coverage ──────────────────────────────────────────────────────────────────
+
+[tool.coverage.run]
+source = ["fusedb"]
+omit   = ["fusedb/_fusedb*"]   # extension module — not traceable by coverage
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under   = 75
