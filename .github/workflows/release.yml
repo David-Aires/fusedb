@@ -120,8 +120,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: x86_64      # Intel Mac
-            runner: macos-13
           - target: aarch64     # Apple Silicon
             runner: macos-14
 
@@ -158,6 +156,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.target }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
