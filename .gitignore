@@ -2,6 +2,7 @@
 /target/
 Cargo.lock        # library crates: do NOT commit lock file
 **/*.rs.bk
+.cargo/
 
 # Python
 __pycache__/

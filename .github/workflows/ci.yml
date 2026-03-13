@@ -111,8 +111,9 @@ jobs:
 
       - name: Build sdist
         run: |
-          uv pip install maturin --system
-          maturin sdist --out dist/
+          uv venv
+          uv pip install maturin
+          uv run maturin sdist --out dist/
 
       - name: Smoke-test sdist install
         run: |
