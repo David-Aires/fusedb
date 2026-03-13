@@ -31,7 +31,7 @@ use super::format::{crc32, HEADER_SIZE, MAGIC, VERSION};
 /// ```
 pub struct WriterCore {
     pub(crate) objects: Vec<Vec<u8>>,
-    pub(crate) keys:    HashMap<Vec<u8>, usize>,
+    pub(crate) keys: HashMap<Vec<u8>, usize>,
 }
 
 impl WriterCore {
@@ -39,7 +39,7 @@ impl WriterCore {
     pub fn new() -> Self {
         Self {
             objects: Vec::new(),
-            keys:    HashMap::new(),
+            keys: HashMap::new(),
         }
     }
 
@@ -74,10 +74,10 @@ impl WriterCore {
     /// file open continue to see the old data via their existing mmap.
     pub fn build(&self, path: &str) -> FuseResult<()> {
         let path = Path::new(path);
-        let tmp  = path.with_extension("fsdb.tmp");
+        let tmp = path.with_extension("fsdb.tmp");
 
         // ── 1. data section ──────────────────────────────────────────────────
-        let mut data_sec:    Vec<u8>  = Vec::new();
+        let mut data_sec: Vec<u8> = Vec::new();
         let mut obj_offsets: Vec<u64> = Vec::with_capacity(self.objects.len());
 
         for raw in &self.objects {
@@ -88,8 +88,7 @@ impl WriterCore {
         }
 
         // ── 2. index section (sorted by key bytes) ───────────────────────────
-        let mut sorted: Vec<(&Vec<u8>, usize)> =
-            self.keys.iter().map(|(k, &id)| (k, id)).collect();
+        let mut sorted: Vec<(&Vec<u8>, usize)> = self.keys.iter().map(|(k, &id)| (k, id)).collect();
         sorted.sort_by_key(|(k, _)| k.as_slice());
 
         let mut idx_sec: Vec<u8> = Vec::new();
@@ -103,7 +102,7 @@ impl WriterCore {
         let mut h = Crc32Hasher::new();
         h.update(&data_sec);
         h.update(&idx_sec);
-        let file_crc     = h.finalize();
+        let file_crc = h.finalize();
         let index_offset = (HEADER_SIZE + data_sec.len()) as u64;
 
         // ── 4. header ────────────────────────────────────────────────────────
@@ -132,16 +131,12 @@ impl WriterCore {
                 .and_then(|_| w.flush())
                 .map_err(|e| FuseError::Io(e.to_string()))?;
 
-            file.sync_all()
-                .map_err(|e| FuseError::Io(e.to_string()))?;
+            file.sync_all().map_err(|e| FuseError::Io(e.to_string()))?;
         }
 
-        fs::rename(&tmp, path)
-            .map_err(|e| FuseError::Io(format!("rename: {e}")))?;
+        fs::rename(&tmp, path).map_err(|e| FuseError::Io(format!("rename: {e}")))?;
 
-        let kb = fs::metadata(path)
-            .map(|m| m.len())
-            .unwrap_or(0) as f64 / 1024.0;
+        let kb = fs::metadata(path).map(|m| m.len()).unwrap_or(0) as f64 / 1024.0;
 
         println!(
             "✅  {}  —  {} objects · {} keys · {:.1} KB",
@@ -155,13 +150,19 @@ impl WriterCore {
 
     /// Number of objects currently staged.
     #[inline]
-    pub fn num_objects(&self) -> usize { self.objects.len() }
+    pub fn num_objects(&self) -> usize {
+        self.objects.len()
+    }
 
     /// Number of keys currently staged.
     #[inline]
-    pub fn num_keys(&self) -> usize { self.keys.len() }
+    pub fn num_keys(&self) -> usize {
+        self.keys.len()
+    }
 }
 
 impl Default for WriterCore {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

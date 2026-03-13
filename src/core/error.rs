@@ -17,9 +17,9 @@ pub enum FuseError {
 impl std::fmt::Display for FuseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Corrupt(m)    => write!(f, "FuseCorruptError: {m}"),
-            Self::Version(v)    => write!(f, "FuseVersionError: unsupported version {v}"),
-            Self::Io(m)         => write!(f, "FuseIOError: {m}"),
+            Self::Corrupt(m) => write!(f, "FuseCorruptError: {m}"),
+            Self::Version(v) => write!(f, "FuseVersionError: unsupported version {v}"),
+            Self::Io(m) => write!(f, "FuseIOError: {m}"),
             Self::InvalidArg(m) => write!(f, "FuseError: {m}"),
         }
     }

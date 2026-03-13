@@ -34,7 +34,9 @@ impl FuseReader {
     #[new]
     #[pyo3(signature = (path, verify = true))]
     fn new(path: &str, verify: bool) -> PyResult<Self> {
-        Ok(Self { inner: ReaderCore::open(path, verify)? })
+        Ok(Self {
+            inner: ReaderCore::open(path, verify)?,
+        })
     }
 
     // ── lookups ───────────────────────────────────────────────────────────────
@@ -47,7 +49,7 @@ impl FuseReader {
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
         let k = extract_key(key)?;
         match self.inner.get(&k)? {
-            None      => Ok(None),
+            None => Ok(None),
             Some(raw) => Ok(Some(PyBytes::new(py, &raw))),
         }
     }
@@ -58,12 +60,8 @@ impl FuseReader {
     }
 
     /// Sorted prefix scan. Returns `list[tuple[str, bytes]]`.
-    fn prefix_raw(
-        &self,
-        py: Python<'_>,
-        prefix: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyList>> {
-        let p    = extract_key(prefix)?;
+    fn prefix_raw(&self, py: Python<'_>, prefix: &Bound<'_, PyAny>) -> PyResult<Py<PyList>> {
+        let p = extract_key(prefix)?;
         let list = PyList::empty(py);
         for (key_str, raw) in self.inner.prefix(&p)? {
             list.append((key_str, PyBytes::new(py, &raw)))?;
@@ -99,14 +97,14 @@ impl FuseReader {
     /// Return file metadata as a `dict`.
     fn stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let d = PyDict::new(py);
-        d.set_item("path",         self.inner.path().to_string_lossy().as_ref())?;
-        d.set_item("version",      VERSION)?;
-        d.set_item("num_keys",     self.inner.num_keys())?;
-        d.set_item("num_objects",  self.inner.num_objects())?;
+        d.set_item("path", self.inner.path().to_string_lossy().as_ref())?;
+        d.set_item("version", VERSION)?;
+        d.set_item("num_keys", self.inner.num_keys())?;
+        d.set_item("num_objects", self.inner.num_objects())?;
         d.set_item("index_offset", self.inner.index_offset())?;
-        d.set_item("data_offset",  HEADER_SIZE as u64)?;
+        d.set_item("data_offset", HEADER_SIZE as u64)?;
         d.set_item("file_size_kb", self.inner.file_size() as f64 / 1024.0)?;
-        d.set_item("file_crc32",   format!("{:#010x}", self.inner.stored_crc()))?;
+        d.set_item("file_crc32", format!("{:#010x}", self.inner.stored_crc()))?;
         Ok(d)
     }
 
@@ -119,13 +117,15 @@ impl FuseReader {
 
     fn close(&self) {}
 
-    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> { slf }
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
 
     fn __exit__(
         &self,
         _exc_type: Option<Bound<'_, PyAny>>,
-        _exc_val:  Option<Bound<'_, PyAny>>,
-        _exc_tb:   Option<Bound<'_, PyAny>>,
+        _exc_val: Option<Bound<'_, PyAny>>,
+        _exc_tb: Option<Bound<'_, PyAny>>,
     ) -> bool {
         false // do not suppress exceptions
     }

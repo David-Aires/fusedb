@@ -11,10 +11,9 @@ use crate::core::error::FuseError;
 impl From<FuseError> for PyErr {
     fn from(e: FuseError) -> Self {
         match &e {
-            FuseError::Io(_)          => PyIOError::new_err(e.to_string()),
-            FuseError::InvalidArg(_)  => PyValueError::new_err(e.to_string()),
-            FuseError::Corrupt(_)
-            | FuseError::Version(_)   => PyRuntimeError::new_err(e.to_string()),
+            FuseError::Io(_) => PyIOError::new_err(e.to_string()),
+            FuseError::InvalidArg(_) => PyValueError::new_err(e.to_string()),
+            FuseError::Corrupt(_) | FuseError::Version(_) => PyRuntimeError::new_err(e.to_string()),
         }
     }
 }

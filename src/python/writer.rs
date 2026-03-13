@@ -26,7 +26,9 @@ pub struct FuseWriter {
 impl FuseWriter {
     #[new]
     fn new() -> Self {
-        Self { inner: WriterCore::new() }
+        Self {
+            inner: WriterCore::new(),
+        }
     }
 
     /// Store pre-encoded *raw_bytes* (msgpack). Returns the object ID.
