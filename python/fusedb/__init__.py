@@ -24,8 +24,9 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import msgpack
 
@@ -47,8 +48,10 @@ __all__ = [
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+
 def _pack(obj: Any) -> bytes:
     return msgpack.packb(obj, use_bin_type=True)
+
 
 def _unpack(raw: bytes) -> Any:
     return msgpack.unpackb(raw, raw=False)
@@ -56,17 +59,21 @@ def _unpack(raw: bytes) -> Any:
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
 
+
 class FuseError(Exception):
     """Base exception for all FuseDB errors."""
 
+
 class FuseCorruptError(FuseError):
     """CRC32 mismatch or truncated file."""
+
 
 class FuseVersionError(FuseError):
     """Unsupported format version."""
 
 
 # ── FuseWriter ────────────────────────────────────────────────────────────────
+
 
 class FuseWriter:
     """
@@ -108,6 +115,7 @@ class FuseWriter:
 
 
 # ── FuseReader ────────────────────────────────────────────────────────────────
+
 
 class FuseReader:
     """
@@ -166,7 +174,7 @@ class FuseReader:
     def close(self) -> None:
         self._r.close()
 
-    def __enter__(self) -> "FuseReader":
+    def __enter__(self) -> FuseReader:
         return self
 
     def __exit__(self, *_: Any) -> None:
@@ -174,10 +182,11 @@ class FuseReader:
 
     def __repr__(self) -> str:
         s = self._r.stats()
-        return f"FuseReader('{Path(s['path']).name}', keys={s['num_keys']}, objects={s['num_objects']})"
+        return f"FuseReader('{Path(s['path']).name}', keys={s['num_keys']}, objects={s['num_objects']})"  # noqa: E501
 
 
 # ── ReloadableFuseReader ──────────────────────────────────────────────────────
+
 
 class ReloadableFuseReader:
     """
@@ -194,30 +203,36 @@ class ReloadableFuseReader:
     """
 
     def __init__(self, path: str | Path, verify: bool = True) -> None:
-        self._path   = Path(path)
-        self._lock   = threading.RLock()
+        self._path = Path(path)
+        self._lock = threading.RLock()
         self._verify = verify
         self._mtime: float | None = None
-        self._db     = FuseReader(str(self._path), verify=verify)
-        self._mtime  = os.path.getmtime(self._path)
+        self._db = FuseReader(str(self._path), verify=verify)
+        self._mtime = os.path.getmtime(self._path)
 
     def get(self, key: str | bytes) -> Any | None:
-        with self._lock: return self._db.get(key)
+        with self._lock:
+            return self._db.get(key)
 
     def exists(self, key: str | bytes) -> bool:
-        with self._lock: return self._db.exists(key)
+        with self._lock:
+            return self._db.exists(key)
 
     def prefix(self, prefix: str | bytes) -> list[tuple[str, Any]]:
-        with self._lock: return self._db.prefix(prefix)
+        with self._lock:
+            return self._db.prefix(prefix)
 
     def keys(self) -> list[str]:
-        with self._lock: return self._db.keys()
+        with self._lock:
+            return self._db.keys()
 
     def stats(self) -> dict:
-        with self._lock: return self._db.stats()
+        with self._lock:
+            return self._db.stats()
 
     def verify(self) -> bool:
-        with self._lock: return self._db.verify()
+        with self._lock:
+            return self._db.verify()
 
     def reload(self) -> bool:
         """Hot-swap to current on-disk file if mtime changed. Returns True if reloaded."""
@@ -229,16 +244,19 @@ class ReloadableFuseReader:
             return False
         new_db = FuseReader(str(self._path), verify=self._verify)
         with self._lock:
-            self._db    = new_db
+            self._db = new_db
             self._mtime = new_mtime
         s = new_db.stats()
-        print(f"  ♻️   Reloaded {self._path.name}  ({s['num_keys']} keys · {s['num_objects']} objects)")
+        print(
+            f"  ♻️   Reloaded {self._path.name}  ({s['num_keys']} keys · {s['num_objects']} objects)"
+        )
         return True
 
     def close(self) -> None:
-        with self._lock: self._db.close()
+        with self._lock:
+            self._db.close()
 
-    def __enter__(self) -> "ReloadableFuseReader":
+    def __enter__(self) -> ReloadableFuseReader:
         return self
 
     def __exit__(self, *_: Any) -> None:
@@ -250,6 +268,7 @@ class ReloadableFuseReader:
 
 
 # ── FuseWatcher ───────────────────────────────────────────────────────────────
+
 
 class FuseWatcher:
     """
@@ -270,14 +289,14 @@ class FuseWatcher:
         self,
         path: str | Path,
         interval: float = 30.0,
-        on_reload: Callable[["ReloadableFuseReader"], None] | None = None,
+        on_reload: Callable[[ReloadableFuseReader], None] | None = None,
         verify: bool = True,
     ) -> None:
-        self._interval  = interval
+        self._interval = interval
         self._on_reload = on_reload
-        self._stop_evt  = threading.Event()
-        self._thread    = threading.Thread(target=self._watch, daemon=True)
-        self.db         = ReloadableFuseReader(path, verify=verify)
+        self._stop_evt = threading.Event()
+        self._thread = threading.Thread(target=self._watch, daemon=True)
+        self.db = ReloadableFuseReader(path, verify=verify)
 
     def start(self) -> None:
         self._thread.start()
@@ -311,6 +330,7 @@ class FuseWatcher:
 
 # ── FusePool ──────────────────────────────────────────────────────────────────
 
+
 class FusePool:
     """
     Thread-safe round-robin reader pool with atomic swap().
@@ -324,10 +344,10 @@ class FusePool:
     """
 
     def __init__(self, path: str | Path, size: int = 4, verify: bool = True) -> None:
-        self._path    = Path(path)
-        self._size    = size
-        self._lock    = threading.RLock()
-        self._idx     = 0
+        self._path = Path(path)
+        self._size = size
+        self._lock = threading.RLock()
+        self._idx = 0
         self._readers = [FuseReader(str(path), verify=verify) for _ in range(size)]
         print(f"  🏊  Pool ready: {size} readers → {self._path.name}")
 
@@ -348,28 +368,34 @@ class FusePool:
 
     def swap(self, new_path: str | Path, verify: bool = True) -> None:
         """Atomically replace all readers with ones pointing to *new_path*."""
-        new_path    = Path(new_path)
+        new_path = Path(new_path)
         new_readers = [FuseReader(str(new_path), verify=verify) for _ in range(self._size)]
         with self._lock:
             old, self._readers, self._path = self._readers, new_readers, new_path
-        for r in old: r.close()
+        for r in old:
+            r.close()
         s = new_readers[0].stats()
         print(f"  🔄  Pool swapped → {new_path.name} ({s['num_keys']} keys)")
 
     def close(self) -> None:
         with self._lock:
-            for r in self._readers: r.close()
+            for r in self._readers:
+                r.close()
 
     def stats(self) -> dict:
         with self._lock:
-            return {"path": str(self._path), "size": self._size,
-                    "readers": [r.stats() for r in self._readers]}
+            return {
+                "path": str(self._path),
+                "size": self._size,
+                "readers": [r.stats() for r in self._readers],
+            }
 
     def __repr__(self) -> str:
         return f"FusePool('{self._path.name}', size={self._size})"
 
 
 # ── merge() ───────────────────────────────────────────────────────────────────
+
 
 def merge(*sources: str | Path, output: str | Path) -> None:
     """
@@ -380,7 +406,7 @@ def merge(*sources: str | Path, output: str | Path) -> None:
     -------
     merge("geo_v1.fsdb", "geo_v2.fsdb", output="geo_merged.fsdb")
     """
-    w:    FuseWriter      = FuseWriter()
+    w: FuseWriter = FuseWriter()
     seen: dict[bytes, int] = {}
 
     for src in sources:
