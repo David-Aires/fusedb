@@ -35,6 +35,12 @@ pub const VERSION: u8 = 2;
 pub const HEADER_SIZE: usize = 40;
 pub const OBJ_HDR_SZ: usize = 8; // obj_len(4) + crc32(4)
 
+/// Largest key the index can address — `key_len` is a `u16`.
+pub const MAX_KEY_LEN: usize = u16::MAX as usize;
+
+/// Largest object the data section can address — `obj_len` is a `u32`.
+pub const MAX_OBJECT_LEN: usize = u32::MAX as usize;
+
 // ─── CRC32 ───────────────────────────────────────────────────────────────────
 
 #[inline]

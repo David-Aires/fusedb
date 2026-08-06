@@ -11,7 +11,18 @@ use std::path::Path;
 use crc32fast::Hasher as Crc32Hasher;
 
 use super::error::{FuseError, FuseResult};
-use super::format::{crc32, HEADER_SIZE, MAGIC, VERSION};
+use super::format::{crc32, HEADER_SIZE, MAGIC, MAX_KEY_LEN, MAX_OBJECT_LEN, VERSION};
+
+/// Summary of a completed [`WriterCore::build`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuildReport {
+    /// Unique objects written to the data section.
+    pub num_objects: usize,
+    /// Index entries (keys) written to the index section.
+    pub num_keys: usize,
+    /// Size of the finished file in bytes.
+    pub file_size: u64,
+}
 
 /// Builds a `.fsdb` file from raw (pre-encoded) object bytes.
 ///
@@ -46,7 +57,9 @@ impl WriterCore {
     /// Store *raw_bytes* as one unique object. Returns its integer ID.
     ///
     /// No deduplication is performed here — duplicate detection is the
-    /// caller's responsibility (see `merge()` in the Python layer).
+    /// caller's responsibility.  This matches the Python `FuseWriter`
+    /// semantics exactly, so the same call sequence produces the same file
+    /// in both languages.
     pub fn add_object(&mut self, raw_bytes: &[u8]) -> usize {
         let id = self.objects.len();
         self.objects.push(raw_bytes.to_vec());
@@ -64,6 +77,12 @@ impl WriterCore {
                 self.objects.len()
             )));
         }
+        if key.len() > MAX_KEY_LEN {
+            return Err(FuseError::InvalidArg(format!(
+                "key is {} bytes, format maximum is {MAX_KEY_LEN}",
+                key.len()
+            )));
+        }
         self.keys.insert(key.to_vec(), obj_id);
         Ok(())
     }
@@ -72,15 +91,36 @@ impl WriterCore {
     ///
     /// The rename is atomic on POSIX systems.  Readers that have the previous
     /// file open continue to see the old data via their existing mmap.
-    pub fn build(&self, path: &str) -> FuseResult<()> {
-        let path = Path::new(path);
+    pub fn build(&self, path: impl AsRef<Path>) -> FuseResult<BuildReport> {
+        let path = path.as_ref();
         let tmp = path.with_extension("fsdb.tmp");
+
+        if self.objects.len() > u32::MAX as usize {
+            return Err(FuseError::InvalidArg(format!(
+                "{} objects exceeds format maximum of {}",
+                self.objects.len(),
+                u32::MAX
+            )));
+        }
+        if self.keys.len() > u32::MAX as usize {
+            return Err(FuseError::InvalidArg(format!(
+                "{} keys exceeds format maximum of {}",
+                self.keys.len(),
+                u32::MAX
+            )));
+        }
 
         // ── 1. data section ──────────────────────────────────────────────────
         let mut data_sec: Vec<u8> = Vec::new();
         let mut obj_offsets: Vec<u64> = Vec::with_capacity(self.objects.len());
 
         for raw in &self.objects {
+            if raw.len() > MAX_OBJECT_LEN {
+                return Err(FuseError::InvalidArg(format!(
+                    "object is {} bytes, format maximum is {MAX_OBJECT_LEN}",
+                    raw.len()
+                )));
+            }
             obj_offsets.push((HEADER_SIZE + data_sec.len()) as u64);
             data_sec.extend_from_slice(&(raw.len() as u32).to_be_bytes());
             data_sec.extend_from_slice(&crc32(raw).to_be_bytes());
@@ -136,16 +176,11 @@ impl WriterCore {
 
         fs::rename(&tmp, path).map_err(|e| FuseError::Io(format!("rename: {e}")))?;
 
-        let kb = fs::metadata(path).map(|m| m.len()).unwrap_or(0) as f64 / 1024.0;
-
-        println!(
-            "✅  {}  —  {} objects · {} keys · {:.1} KB",
-            path.display(),
-            self.objects.len(),
-            self.keys.len(),
-            kb,
-        );
-        Ok(())
+        Ok(BuildReport {
+            num_objects: self.objects.len(),
+            num_keys: self.keys.len(),
+            file_size: (HEADER_SIZE + data_sec.len() + idx_sec.len()) as u64,
+        })
     }
 
     /// Number of objects currently staged.

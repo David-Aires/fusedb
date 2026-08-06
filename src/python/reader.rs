@@ -83,6 +83,20 @@ impl FuseReader {
         Ok(list.into())
     }
 
+    /// All `(key_bytes, raw_bytes)` pairs in sorted key order.
+    ///
+    /// Unlike `items_raw`, keys come back as `bytes` — no UTF-8 lossy decode,
+    /// so `merge()` can round-trip non-UTF-8 keys unchanged.
+    fn items_raw_bytes(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
+        let core = &self.inner;
+        let list = PyList::empty(py);
+        for (key, &offset) in core.sorted_keys().iter().zip(core.sorted_offsets()) {
+            let raw = core.read_at(offset)?;
+            list.append((PyBytes::new(py, key), PyBytes::new(py, &raw)))?;
+        }
+        Ok(list.into())
+    }
+
     /// Unique objects only (deduplicated by file offset).
     fn objects_raw(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
         let list = PyList::empty(py);

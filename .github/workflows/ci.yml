@@ -32,14 +32,99 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Set up Python (pyo3 links against libpython without extension-module)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
       - name: cargo clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: cargo test (unit)
-        run: cargo test --lib
+      - name: cargo test (unit + Rust API + watcher)
+        run: cargo test --lib --test rust_api --test watch
+
+      - name: cargo doc (public API docs must build clean)
+        run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+      - name: doctests
+        run: cargo test --doc
+
+      - name: examples build
+        run: cargo build --examples
+
+  # ── 1b. The crate must stand alone — no PyO3, no default features ────────────
+  rust-standalone:
+    name: Rust — crate is publishable standalone
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build with default features (msgpack, no PyO3)
+        run: cargo build --lib
+
+      - name: Build with no default features (raw bytes only)
+        run: cargo build --lib --no-default-features
+
+      - name: Fail if PyO3 leaks into the default dependency graph
+        run: |
+          if cargo tree --edges normal --prefix none | grep -qi '^pyo3'; then
+            echo "❌ pyo3 must stay behind the \`python\` feature"
+            exit 1
+          fi
+
+      - name: cargo package (dry-run of what crates.io receives)
+        run: cargo package --locked
+
+  # ── 1c. Cross-language compatibility ─────────────────────────────────────────
+  #
+  # Guards the project's core promise: one format, two implementations. A change
+  # that makes Rust and Python disagree about a `.fsdb` file fails here.
+  interop:
+    name: Interop — Rust ↔ Python
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build and install the Python extension
+        shell: bash
+        run: |
+          uv venv
+          uv pip install maturin msgpack
+          # `--compatibility linux` uses the native platform tag instead of the
+          # manylinux2014 default from pyproject.toml. This wheel is installed
+          # into the runner's own venv and thrown away; auditing it for glibc
+          # compatibility would fail on a modern runner and prove nothing.
+          # Distributable wheels are built in manylinux containers by the
+          # release workflow. The flag is ignored on macOS and Windows.
+          uv run --no-project maturin build --out dist/ --compatibility linux
+          uv pip install --force-reinstall --no-deps dist/*.whl
+
+      - name: Interoperability tests
+        shell: bash
+        env:
+          FUSEDB_REQUIRE_INTEROP: "1"
+        run: cargo test --test interop
 
   # ── 2. Python × OS × version matrix ─────────────────────────────────────────
   python-test:

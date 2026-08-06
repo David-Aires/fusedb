@@ -37,8 +37,8 @@ impl ReaderCore {
     ///
     /// If `verify` is `true`, validates the whole-file CRC32 on open
     /// (recommended for untrusted files; skip for hot-paths after initial check).
-    pub fn open(path: &str, verify: bool) -> FuseResult<Self> {
-        let path = Path::new(path);
+    pub fn open(path: impl AsRef<Path>, verify: bool) -> FuseResult<Self> {
+        let path = path.as_ref();
         let file =
             File::open(path).map_err(|e| FuseError::Io(format!("cannot open {:?}: {e}", path)))?;
 
@@ -178,6 +178,32 @@ impl ReaderCore {
     #[inline]
     pub fn index_offset(&self) -> u64 {
         self.idx.index_offset
+    }
+
+    /// All key byte strings, in the sorted order they appear in the index.
+    #[inline]
+    pub fn sorted_keys(&self) -> &[Vec<u8>] {
+        &self.idx.sorted_keys
+    }
+
+    /// Data-section offsets, parallel to [`sorted_keys`](Self::sorted_keys).
+    #[inline]
+    pub fn sorted_offsets(&self) -> &[u64] {
+        &self.idx.sorted_offsets
+    }
+
+    /// Index of the first key `>= prefix`, for prefix scans.
+    #[inline]
+    pub fn lower_bound(&self, prefix: &[u8]) -> usize {
+        self.idx
+            .sorted_keys
+            .partition_point(|k| k.as_slice() < prefix)
+    }
+
+    /// Read the raw object bytes stored at `offset`.
+    #[inline]
+    pub fn read_at(&self, offset: u64) -> FuseResult<Vec<u8>> {
+        read_raw(&self.mm, offset)
     }
 
     // ── integrity ─────────────────────────────────────────────────────────────

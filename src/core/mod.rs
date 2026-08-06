@@ -13,4 +13,4 @@ pub mod writer;
 // Flatten the most-used types to `fusedb::core::*`
 pub use error::{FuseError, FuseResult};
 pub use reader::ReaderCore;
-pub use writer::WriterCore;
+pub use writer::{BuildReport, WriterCore};
