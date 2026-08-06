@@ -33,7 +33,7 @@ import msgpack
 from fusedb._fusedb import _FuseReader as _RustReader
 from fusedb._fusedb import _FuseWriter as _RustWriter
 
-__version__: str = "0.2.0"
+__version__: str = "0.3.0"
 __all__ = [
     "FuseWriter",
     "FuseReader",
@@ -402,6 +402,9 @@ def merge(*sources: str | Path, output: str | Path) -> None:
     Merge two or more .fsdb files into one.
     Objects with identical content are stored only once (content-addressed).
 
+    Produces byte-identical output to the Rust ``fusedb::merge()`` given the
+    same sources in the same order.
+
     Example
     -------
     merge("geo_v1.fsdb", "geo_v2.fsdb", output="geo_merged.fsdb")
@@ -412,7 +415,9 @@ def merge(*sources: str | Path, output: str | Path) -> None:
     for src in sources:
         db = FuseReader(str(src), verify=True)
         try:
-            for key, raw in db._r.items_raw():
+            # items_raw_bytes keeps keys as bytes — a lossy UTF-8 decode here
+            # would silently rewrite non-UTF-8 keys during a merge.
+            for key, raw in db._r.items_raw_bytes():
                 if raw not in seen:
                     seen[raw] = w._w.add_object_raw(raw)
                 w._w.add_key(key, seen[raw])

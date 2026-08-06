@@ -43,7 +43,17 @@ impl FuseWriter {
 
     /// Atomically write the `.fsdb` file: tmp → fsync → rename.
     fn build(&self, path: &str) -> PyResult<()> {
-        Ok(self.inner.build(path)?)
+        let report = self.inner.build(path)?;
+        // The progress line is Python-package UX, not library behaviour —
+        // `WriterCore` stays silent so Rust consumers control their own output.
+        println!(
+            "✅  {}  —  {} objects · {} keys · {:.1} KB",
+            path,
+            report.num_objects,
+            report.num_keys,
+            report.file_size as f64 / 1024.0,
+        );
+        Ok(())
     }
 
     fn __repr__(&self) -> String {

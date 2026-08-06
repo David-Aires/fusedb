@@ -6,7 +6,7 @@ build-backend = "maturin"
 
 [project]
 name        = "fusedb"
-version     = "0.2.0"
+version     = "0.3.0"
 description = "A read-optimised binary database where many keys share one object — with zero duplication on disk."
 readme      = "README.md"
 license     = { text = "MIT" }
@@ -55,7 +55,8 @@ compatibility  = "manylinux2014"
 # strip is handled by [profile.release] strip = true in Cargo.toml
 # do NOT set strip here — it breaks `maturin develop` (debug builds)
 profile        = "release"
-features       = ["pyo3/extension-module"]
+# `python` gates the PyO3 bindings; Rust consumers of the crate never enable it.
+features       = ["python", "pyo3/extension-module"]
 
 # ── dependency-groups (PEP 735 / uv native) ───────────────────────────────────
 

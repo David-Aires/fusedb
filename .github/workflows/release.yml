@@ -1,29 +1,77 @@
 name: Release
 
-# Trigger: push a version tag like v0.2.0
+# Two ways in:
+#   • push a version tag (v0.3.0) → publishes Python *and* Rust
+#   • run manually             → tick whichever ecosystems you want
+#
+# The two package registries are decoupled on purpose: a Rust-only fix should
+# not force a PyPI release, and vice versa.
 on:
   push:
     tags:
       - "v*.*.*"
 
-  # Manual trigger from GitHub UI
   workflow_dispatch:
     inputs:
+      publish_python:
+        description: "Build wheels and publish to PyPI"
+        required: false
+        default: true
+        type: boolean
+      publish_rust:
+        description: "Publish the crate to crates.io"
+        required: false
+        default: true
+        type: boolean
       dry_run:
-        description: "Dry run (build wheels but do not publish)"
+        description: "Build and verify everything, publish nothing"
         required: false
         default: false
         type: boolean
 
 env:
   CARGO_TERM_COLOR: always
-  MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
 
 jobs:
-  # ── 1. Validate tag matches pyproject.toml version ──────────────────────────
+  # ── 0. Decide what this run publishes ────────────────────────────────────────
+  plan:
+    name: Plan release
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.plan.outputs.python }}
+      rust: ${{ steps.plan.outputs.rust }}
+      dry_run: ${{ steps.plan.outputs.dry_run }}
+    steps:
+      - id: plan
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # Tag pushes are synchronised releases.
+            PYTHON=true; RUST=true; DRY=false
+          else
+            PYTHON="${{ inputs.publish_python }}"
+            RUST="${{ inputs.publish_rust }}"
+            DRY="${{ inputs.dry_run }}"
+          fi
+          {
+            echo "python=$PYTHON"
+            echo "rust=$RUST"
+            echo "dry_run=$DRY"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "### Release plan"                >> "$GITHUB_STEP_SUMMARY"
+          echo "- Python (PyPI): \`$PYTHON\`"    >> "$GITHUB_STEP_SUMMARY"
+          echo "- Rust (crates.io): \`$RUST\`"   >> "$GITHUB_STEP_SUMMARY"
+          echo "- Dry run: \`$DRY\`"             >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$PYTHON" != "true" ] && [ "$RUST" != "true" ]; then
+            echo "❌ Nothing selected to publish." && exit 1
+          fi
+
+  # ── 1. Tag must match every version string in the repo ──────────────────────
   validate:
     name: Validate version
     runs-on: ubuntu-latest
+    needs: [plan]
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
@@ -31,23 +79,68 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Check tag == pyproject version
+      - name: Check tag == pyproject == Cargo == __version__
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          PKG=$(uv run python -c "
-          import tomllib
+          read -r PKG CRATE PY <<<"$(uv run python -c "
+          import re, tomllib
           with open('pyproject.toml','rb') as f:
-              print(tomllib.load(f)['project']['version'])
-          ")
-          echo "Tag: $TAG  |  Package: $PKG"
-          [ "$TAG" = "$PKG" ] || (echo "❌ Version mismatch!" && exit 1)
+              pkg = tomllib.load(f)['project']['version']
+          with open('Cargo.toml','rb') as f:
+              crate = tomllib.load(f)['package']['version']
+          src = open('python/fusedb/__init__.py', encoding='utf-8').read()
+          dunder = re.search(r'__version__.*?\"([^\"]+)\"', src).group(1)
+          print(pkg, crate, dunder)
+          ")"
+          echo "tag=$TAG  pyproject=$PKG  Cargo=$CRATE  __version__=$PY"
+          for v in "$PKG" "$CRATE" "$PY"; do
+            [ "$TAG" = "$v" ] || { echo "❌ Version mismatch"; exit 1; }
+          done
 
-  # ── 2. Build Linux wheels (manylinux) ───────────────────────────────────────
+  # ── 2. Cross-language compatibility gate ────────────────────────────────────
+  #
+  # Nothing ships unless a file written by one implementation still opens in the
+  # other. This is the guard against a format regression reaching a registry.
+  interop:
+    name: Interoperability gate
+    runs-on: ubuntu-latest
+    needs: [plan, validate]
+    if: always() && needs.plan.result == 'success' && needs.validate.result != 'failure'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build the Python extension
+        run: |
+          uv venv
+          uv pip install maturin msgpack
+          # `--compatibility linux` uses the native platform tag instead of the
+          # manylinux2014 default from pyproject.toml. This wheel is installed
+          # into the runner's own venv and thrown away; auditing it for glibc
+          # compatibility would fail on a modern runner and prove nothing.
+          # Distributable wheels are built in manylinux containers by the
+          # release workflow. The flag is ignored on macOS and Windows.
+          uv run --no-project maturin build --out dist/ --compatibility linux
+          uv pip install --force-reinstall --no-deps dist/*.whl
+
+      - name: Rust ↔ Python interoperability tests
+        env:
+          FUSEDB_REQUIRE_INTEROP: "1"
+          FUSEDB_PYTHON: .venv/bin/python
+        run: cargo test --test interop --test rust_api --test watch
+
+  # ── 3. Build Linux wheels (manylinux) ───────────────────────────────────────
   linux:
     name: Linux / ${{ matrix.target }}
     runs-on: ubuntu-latest
-    needs: [validate]
-    if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    needs: [plan, interop]
+    if: needs.plan.outputs.python == 'true'
     strategy:
       matrix:
         target:
@@ -86,12 +179,12 @@ jobs:
           name: wheels-linux-${{ matrix.target }}
           path: dist/*.whl
 
-  # ── 3. Build musl (Alpine) wheels ───────────────────────────────────────────
+  # ── 4. Build musl (Alpine) wheels ───────────────────────────────────────────
   musllinux:
     name: musl Linux / ${{ matrix.target }}
     runs-on: ubuntu-latest
-    needs: [validate]
-    if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    needs: [plan, interop]
+    if: needs.plan.outputs.python == 'true'
     strategy:
       matrix:
         target: [x86_64, aarch64]
@@ -111,12 +204,12 @@ jobs:
           name: wheels-musllinux-${{ matrix.target }}
           path: dist/*.whl
 
-  # ── 4. Build macOS wheels ────────────────────────────────────────────────────
+  # ── 5. Build macOS wheels ────────────────────────────────────────────────────
   macos:
     name: macOS / ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
-    needs: [validate]
-    if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    needs: [plan, interop]
+    if: needs.plan.outputs.python == 'true'
     strategy:
       matrix:
         include:
@@ -144,12 +237,12 @@ jobs:
           name: wheels-macos-${{ matrix.target }}
           path: dist/*.whl
 
-  # ── 5. Build Windows wheels ──────────────────────────────────────────────────
+  # ── 6. Build Windows wheels ──────────────────────────────────────────────────
   windows:
     name: Windows / ${{ matrix.target }}
     runs-on: windows-latest
-    needs: [validate]
-    if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    needs: [plan, interop]
+    if: needs.plan.outputs.python == 'true'
     strategy:
       matrix:
         target: [x64, x86]
@@ -177,12 +270,12 @@ jobs:
           name: wheels-windows-${{ matrix.target }}
           path: dist/*.whl
 
-  # ── 6. Build sdist ───────────────────────────────────────────────────────────
+  # ── 7. Build sdist ───────────────────────────────────────────────────────────
   sdist:
     name: Build sdist
     runs-on: ubuntu-latest
-    needs: [validate]
-    if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    needs: [plan, interop]
+    if: needs.plan.outputs.python == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -197,15 +290,12 @@ jobs:
           name: sdist
           path: dist/*.tar.gz
 
-  # ── 7. Publish to PyPI ───────────────────────────────────────────────────────
-  publish:
+  # ── 8. Publish to PyPI ───────────────────────────────────────────────────────
+  publish-python:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: [linux, musllinux, macos, windows, sdist]
-    # Only publish on real tag pushes (not manual dry-run)
-    if: >
-      startsWith(github.ref, 'refs/tags/v') &&
-      (github.event_name == 'push' || github.event.inputs.dry_run == 'false')
+    needs: [plan, linux, musllinux, macos, windows, sdist]
+    if: needs.plan.outputs.python == 'true' && needs.plan.outputs.dry_run != 'true'
     environment:
       name: pypi
       url: https://pypi.org/project/fusedb
@@ -228,11 +318,54 @@ jobs:
           skip-existing: true
           verbose: true
 
-  # ── 8. Create GitHub Release ─────────────────────────────────────────────────
+  # ── 9. Publish to crates.io ──────────────────────────────────────────────────
+  publish-rust:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: [plan, interop]
+    if: needs.plan.outputs.rust == 'true'
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/fusedb
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Packages with default features only — `python` stays off, so the
+      # published crate never drags PyO3 into a Rust consumer's build.
+      - name: cargo package (verifies the crate builds standalone)
+        run: cargo package --locked
+
+      - name: Confirm the packaged crate has no PyO3 dependency
+        run: |
+          if cargo tree --edges normal --prefix none | grep -qi '^pyo3'; then
+            echo "❌ pyo3 is a default dependency — it must stay behind the \`python\` feature"
+            exit 1
+          fi
+          echo "✅ default feature set is PyO3-free"
+
+      - name: cargo publish
+        if: needs.plan.outputs.dry_run != 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked --no-verify
+
+  # ── 10. Create GitHub Release ────────────────────────────────────────────────
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [publish]
+    needs: [plan, publish-python, publish-rust]
+    # Runs once whichever publish jobs were selected have finished, as long as
+    # none of them failed.
+    if: >
+      always() &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.plan.outputs.dry_run != 'true' &&
+      needs.publish-python.result != 'failure' &&
+      needs.publish-rust.result != 'failure'
     permissions:
       contents: write
     steps:
@@ -240,6 +373,7 @@ jobs:
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
+        continue-on-error: true   # a Rust-only release produces no wheels
         with:
           path: dist/
           merge-multiple: true
@@ -260,5 +394,6 @@ jobs:
           name: "fusedb ${{ github.ref_name }}"
           body: ${{ steps.changelog.outputs.notes }}
           files: dist/*
+          fail_on_unmatched_files: false
           draft: false
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}

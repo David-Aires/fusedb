@@ -12,8 +12,10 @@ impl From<FuseError> for PyErr {
     fn from(e: FuseError) -> Self {
         match &e {
             FuseError::Io(_) => PyIOError::new_err(e.to_string()),
-            FuseError::InvalidArg(_) => PyValueError::new_err(e.to_string()),
-            FuseError::Corrupt(_) | FuseError::Version(_) => PyRuntimeError::new_err(e.to_string()),
+            FuseError::InvalidArg(_) | FuseError::Serialization(_) => {
+                PyValueError::new_err(e.to_string())
+            }
+            _ => PyRuntimeError::new_err(e.to_string()),
         }
     }
 }
